@@ -1,6 +1,7 @@
 "use client";
 import { useState, useRef } from "react";
 import { FiUpload, FiYoutube, FiEdit2 } from "react-icons/fi";
+import Link from "next/link";
 
 const TABS = [
   { key: "file", label: "파일 업로드", icon: <FiUpload /> },
@@ -16,17 +17,146 @@ export default function Home() {
   const [inputText, setInputText] = useState("");
   const [convertResult, setConvertResult] = useState("");
   const [summaryResult, setSummaryResult] = useState("");
+  const [summaryMetadata, setSummaryMetadata] = useState<{
+    originalLength?: number;
+    cleanedLength?: number;
+    summaryLength?: number;
+    compressionRatio?: number;
+  } | null>(null);
   const [loading, setLoading] = useState(false);
+  const [loadingStep, setLoadingStep] = useState(""); // 현재 진행 단계
+  const [progress, setProgress] = useState(0); // 진행률 (0-100)
   const [error, setError] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [dragActive, setDragActive] = useState(false);
+  
+  // 결과 관련 상태
+  const [uploadResult, setUploadResult] = useState<{
+    fileName?: string;
+    fileSize?: number;
+    fileType?: string;
+    processingTime?: number;
+    speakers?: any[];
+    segments?: any[];
+    confidence?: number;
+  } | null>(null);
+  const [expandedSpeakers, setExpandedSpeakers] = useState<Set<string>>(new Set());
+  
+  // 히스토리 저장 함수
+  const saveToHistory = (type: 'file' | 'youtube' | 'text', originalText: string, summaryText?: string) => {
+    const historyItem = {
+      type,
+      originalText,
+      summaryText,
+      processingTime: uploadResult?.processingTime,
+      fileSize: uploadResult?.fileSize,
+      fileName: uploadResult?.fileName,
+    };
+    
+    const savedHistory = localStorage.getItem('smartnote-history');
+    const history = savedHistory ? JSON.parse(savedHistory) : [];
+    
+    const newItem = {
+      ...historyItem,
+      id: crypto.randomUUID(),
+      timestamp: new Date().toISOString()
+    };
+    
+    const updatedHistory = [newItem, ...history].slice(0, 100); // 최대 100개
+    localStorage.setItem('smartnote-history', JSON.stringify(updatedHistory));
+  };
+
+  // 유튜브 URL 유효성 검사
+  const isValidYouTubeUrl = (url: string): boolean => {
+    const youtubeRegex = /^(https?:\/\/)?(www\.)?(youtube\.com\/watch\?v=|youtu\.be\/)[\w-]+(&\S*)?$/;
+    return youtubeRegex.test(url);
+  };
+
+  // 결과 다운로드 함수들
+  const downloadAsText = (content: string, filename: string) => {
+    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${filename}.txt`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const downloadAsJson = (convertResult: string, summaryResult: string, filename: string) => {
+    const data = {
+      timestamp: new Date().toISOString(),
+      originalText: convertResult,
+      summary: summaryResult,
+      metadata: {
+        tool: "SmartNote",
+        version: "1.0"
+      }
+    };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${filename}.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const copyToClipboard = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      // 임시 성공 메시지 (나중에 toast로 개선 가능)
+      const originalError = error;
+      setError("클립보드에 복사되었습니다!");
+      setTimeout(() => setError(originalError), 2000);
+    } catch (err) {
+      setError("클립보드 복사에 실패했습니다.");
+    }
+  };
+
+  // 파일 크기 포맷 함수
+  const formatFileSize = (bytes: number): string => {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  };
+
+  // 처리 시간 포맷 함수
+  const formatProcessingTime = (seconds: number): string => {
+    if (seconds < 1) return '< 1초';
+    if (seconds < 60) return `${Math.round(seconds)}초`;
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = Math.round(seconds % 60);
+    return `${minutes}분 ${remainingSeconds}초`;
+  };
+
+  // 화자 토글 함수
+  const toggleSpeaker = (speakerName: string) => {
+    const newExpanded = new Set(expandedSpeakers);
+    if (newExpanded.has(speakerName)) {
+      newExpanded.delete(speakerName);
+    } else {
+      newExpanded.add(speakerName);
+    }
+    setExpandedSpeakers(newExpanded);
+  };
 
   // 변환 버튼 클릭
   const handleConvert = async () => {
     setError("");
     setConvertResult("");
     setSummaryResult("");
+    setUploadResult(null);
     setLoading(true);
+    setProgress(0);
+    const startTime = Date.now();
+    
     try {
       let text = "";
       if (tab === "file") {
@@ -35,47 +165,129 @@ export default function Home() {
           setLoading(false);
           return;
         }
+        
+        setLoadingStep("파일 업로드 중...");
+        setProgress(20);
+        
         const formData = new FormData();
         formData.append("file", fileObj);
+        
+        setLoadingStep("음성 변환 중...");
+        setProgress(50);
+        
         const res = await fetch("/api/convert", {
           method: "POST",
           body: formData,
         });
+        
+        setProgress(80);
         const data = await res.json();
         console.log('CLOVA 응답:', JSON.stringify(data, null, 2));
         text = data.text || '';
         console.log('추출된 텍스트:', text);
+        
         if (!res.ok) throw new Error(data.error || "변환 실패");
+        
+        // 결과 메타데이터 저장
+        const processingTime = (Date.now() - startTime) / 1000;
+        setUploadResult({
+          fileName: fileObj.name,
+          fileSize: fileObj.size,
+          fileType: fileObj.type || '알 수 없음',
+          processingTime,
+          speakers: data.speakers || [],
+          segments: data.segments || [],
+          confidence: data.segments ? 
+            Math.round(data.segments.reduce((acc: number, seg: any) => acc + (seg.confidence || 0), 0) / data.segments.length * 100) / 100 
+            : undefined
+        });
+        
+        setLoadingStep("변환 완료!");
+        setProgress(100);
+        
+        // 히스토리에 저장
+        saveToHistory('file', text);
+        
       } else if (tab === "youtube") {
-        if (!youtubeUrl) {
+        if (!youtubeUrl.trim()) {
           setError("유튜브 링크를 입력해주세요.");
           setLoading(false);
           return;
         }
-        // 실제 서비스에서는 서버에서 youtube-dl 등으로 음성 추출 후 변환 필요
-        setError("유튜브 링크 변환은 데모에서 지원하지 않습니다.");
-        setLoading(false);
-        return;
+        
+        if (!isValidYouTubeUrl(youtubeUrl.trim())) {
+          setError("올바른 유튜브 URL을 입력해주세요. (예: https://www.youtube.com/watch?v=... 또는 https://youtu.be/...)");
+          setLoading(false);
+          return;
+        }
+        
+        setLoadingStep("유튜브 비디오 정보 확인 중...");
+        setProgress(20);
+        
+        const res = await fetch("/api/youtube", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url: youtubeUrl }),
+        });
+        
+        setLoadingStep("오디오 추출 중...");
+        setProgress(60);
+        
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "유튜브 변환 실패");
+        
+        text = data.text || '';
+        
+        setLoadingStep("변환 완료!");
+        setProgress(100);
+        
+        // 히스토리에 저장
+        saveToHistory('youtube', text);
       } else if (tab === "text") {
         if (!inputText.trim()) {
           setError("텍스트를 입력해주세요.");
           setLoading(false);
           return;
         }
+        
+        setLoadingStep("텍스트 처리 중...");
+        setProgress(50);
+        
+        // 텍스트 탭은 즉시 완료
         text = inputText;
+        
+        setLoadingStep("완료!");
+        setProgress(100);
+        
+        // 히스토리에 저장
+        saveToHistory('text', text);
       }
+      
       setConvertResult(text || "");
+      
+      // 완료 후 잠깐 보여주고 숨기기
+      setTimeout(() => {
+        setLoading(false);
+        setProgress(0);
+        setLoadingStep("");
+      }, 500);
+      
     } catch (e: any) {
       setError(e.message || "오류가 발생했습니다.");
+      setLoading(false);
+      setProgress(0);
+      setLoadingStep("");
     }
-    setLoading(false);
   };
 
   // 요약 버튼 클릭
   const handleSummary = async () => {
     setError("");
     setSummaryResult("");
+    setSummaryMetadata(null);
     setLoading(true);
+    setProgress(0);
+    
     try {
       const text = convertResult;
       if (!text) {
@@ -83,18 +295,69 @@ export default function Home() {
         setLoading(false);
         return;
       }
+      
+      // 텍스트 길이 검증
+      if (text.length < 100) {
+        setError("텍스트가 너무 짧습니다. 최소 100자 이상의 텍스트가 필요합니다.");
+        setLoading(false);
+        return;
+      }
+      
+      if (text.length > 10000) {
+        setError("텍스트가 너무 깁니다. 최대 10,000자까지 지원됩니다.");
+        setLoading(false);
+        return;
+      }
+      
+      setLoadingStep("텍스트 분석 중...");
+      setProgress(30);
+      
       const res = await fetch("/api/summary", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text }),
       });
+      
+      setLoadingStep("요약 생성 중...");
+      setProgress(70);
+      
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "요약 실패");
+      
+      setLoadingStep("요약 완료!");
+      setProgress(100);
+      
       setSummaryResult(data.summary || "");
+      setSummaryMetadata(data.metadata || null);
+      
+      // 히스토리 업데이트 (요약 결과 추가)
+      const savedHistory = localStorage.getItem('smartnote-history');
+      if (savedHistory) {
+        try {
+          const history = JSON.parse(savedHistory);
+          if (history.length > 0 && history[0].originalText === convertResult) {
+            // 최근 항목에 요약 추가
+            history[0].summaryText = data.summary;
+            localStorage.setItem('smartnote-history', JSON.stringify(history));
+          }
+        } catch (error) {
+          console.error('History 업데이트 실패:', error);
+        }
+      }
+      
+      // 완료 후 잠깐 보여주고 숨기기
+      setTimeout(() => {
+        setLoading(false);
+        setProgress(0);
+        setLoadingStep("");
+      }, 500);
+      
     } catch (e: any) {
       setError(e.message || "오류가 발생했습니다.");
+      setLoading(false);
+      setProgress(0);
+      setLoadingStep("");
     }
-    setLoading(false);
   };
 
   // 드래그 앤 드롭 이벤트 핸들러
@@ -136,6 +399,11 @@ export default function Home() {
       setFileObj(file);
       setError(""); // 에러 메시지 초기화
       if (fileInputRef.current) fileInputRef.current.value = "";
+      
+      // 성공 메시지 임시 표시
+      const originalError = error;
+      setError(`✅ ${file.name} 파일이 성공적으로 업로드되었습니다!`);
+      setTimeout(() => setError(originalError), 3000);
     }
   };
 
@@ -163,14 +431,16 @@ export default function Home() {
             </div>
             대시보드
           </button>
-          <button className="w-full text-left px-3 py-2 rounded-lg text-white/80 font-medium hover:bg-white/10 flex items-center gap-3">
-            <div className="w-4 h-4">
-              <svg viewBox="0 0 24 24" fill="currentColor" className="w-full h-full">
-                <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"/>
-              </svg>
-            </div>
-            변환 기록
-          </button>
+          <Link href="/history">
+            <button className="w-full text-left px-3 py-2 rounded-lg text-white/80 font-medium hover:bg-white/10 flex items-center gap-3">
+              <div className="w-4 h-4">
+                <svg viewBox="0 0 24 24" fill="currentColor" className="w-full h-full">
+                  <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"/>
+                </svg>
+              </div>
+              변환 기록
+            </button>
+          </Link>
           <button className="w-full text-left px-3 py-2 rounded-lg text-white/80 font-medium hover:bg-white/10 flex items-center gap-3">
             <div className="w-4 h-4">
               <svg viewBox="0 0 24 24" fill="currentColor" className="w-full h-full">
@@ -191,8 +461,8 @@ export default function Home() {
       </aside>
 
       {/* 메인 컨텐츠 */}
-      <main className="ml-64 p-8 flex items-center justify-center min-h-screen">
-        <div className="w-full max-w-4xl">
+      <main className="ml-40 p-8 flex items-center justify-center min-h-screen">
+        <div className="w-full max-w-6xl">
           {/* 헤더 */}
           <div className="text-center mb-8">
             <h1 className="text-4xl font-bold text-white mb-2">AI 변환 & 요약 도구</h1>
@@ -202,7 +472,7 @@ export default function Home() {
           </div>
 
           {/* 중앙 흰색 카드 */}
-          <div className="bg-white rounded-3xl p-8 shadow-2xl">
+          <div className="bg-white rounded-4xl p-8 shadow-2xl">
             <div className="flex items-center gap-3 mb-6">
               <div className="w-8 h-8 rounded-lg bg-orange-500 flex items-center justify-center">
                 <svg viewBox="0 0 24 24" fill="white" className="w-4 h-4">
@@ -294,13 +564,28 @@ export default function Home() {
                     }}
                   />
                    {fileName && (
-                    <div className=" px-4 py-2 bg-gray-100 rounded-lg inline-block border border-gray-300">
-                      <span className="text-gray-700 font-medium text-sm">{fileName}</span>
+                    <div className="mt-4 p-4 bg-green-50 border border-green-200 rounded-lg">
+                      <div className="flex items-center gap-3 mb-2">
+                        <div className="w-8 h-8 bg-green-500 rounded-full flex items-center justify-center">
+                          <svg viewBox="0 0 24 24" fill="white" className="w-4 h-4">
+                            <path d="M9,20.42L2.79,14.21L5.62,11.38L9,14.77L18.88,4.88L21.71,7.71L9,20.42Z"/>
+                          </svg>
+                        </div>
+                        <div>
+                          <div className="text-sm font-semibold text-green-700">파일 업로드 완료</div>
+                          <div className="text-xs text-green-600">{fileName}</div>
+                        </div>
+                      </div>
+                      {fileObj && (
+                        <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-green-600">
+                          <div><span className="font-medium">크기:</span> {formatFileSize(fileObj.size)}</div>
+                          <div><span className="font-medium">형식:</span> {fileObj.type || '알 수 없음'}</div>
+                        </div>
+                      )}
                     </div>
                   )}
-                  <p></p>
-                  <label htmlFor="file-upload" className="mt-2 inline-block px-6 py-3 rounded-xl bg-gray-800 text-white font-medium cursor-pointer hover:bg-gray-600 transition-all">
-                    파일 선택
+                  <label htmlFor="file-upload" className="mt-4 inline-block px-6 py-3 rounded-xl bg-gray-800 text-white font-medium cursor-pointer hover:bg-gray-600 transition-all">
+                    {fileName ? '다른 파일 선택' : '파일 선택'}
                   </label>
                  
                 </div>
@@ -313,14 +598,22 @@ export default function Home() {
                       <path d="M10,15L15.19,12L10,9V15M21.56,7.17C21.69,7.64 21.78,8.27 21.84,9.07C21.91,9.87 21.94,10.56 21.94,11.16L22,12C22,14.19 21.84,15.8 21.56,16.83C21.31,17.73 20.73,18.31 19.83,18.56C19.36,18.69 18.5,18.78 17.18,18.84C15.88,18.91 14.69,18.94 13.59,18.94L12,19C7.81,19 5.2,18.84 4.17,18.56C3.27,18.31 2.69,17.73 2.44,16.83C2.31,16.36 2.22,15.73 2.16,14.93C2.09,14.13 2.06,13.44 2.06,12.84L2,12C2,9.81 2.16,8.2 2.44,7.17C2.69,6.27 3.27,5.69 4.17,5.44C4.64,5.31 5.5,5.22 6.82,5.16C8.12,5.09 9.31,5.06 10.41,5.06L12,5C16.19,5 18.8,5.16 19.83,5.44C20.73,5.69 21.31,6.27 21.56,7.17Z"/>
                     </svg>
                   </div>
-                  <h3 className="text-base font-medium text-gray-700 mb-4">유튜브 영상 링크를 입력하세요</h3>
+                  <h3 className="text-base font-medium text-gray-700 mb-1">유튜브 영상 링크를 입력하세요</h3>
+                  <p className="text-gray-500 mb-6 text-sm">최대 30분까지 지원 • 한국어 음성 권장</p>
                   <input
                     type="text"
-                    placeholder="https://www.youtube.com/watch?v=..."
-                    className="w-full max-w-lg px-4 py-3 bg-white border border-gray-300 rounded-xl text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-orange-400"
+                    placeholder="https://www.youtube.com/watch?v=... 또는 https://youtu.be/..."
+                    className={`w-full max-w-lg px-4 py-3 bg-white border rounded-xl text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-2 transition-all ${
+                      youtubeUrl.trim() && !isValidYouTubeUrl(youtubeUrl.trim()) 
+                        ? "border-red-300 focus:ring-red-400" 
+                        : "border-gray-300 focus:ring-orange-400"
+                    }`}
                     value={youtubeUrl}
                     onChange={e => setYoutubeUrl(e.target.value)}
                   />
+                  {youtubeUrl.trim() && !isValidYouTubeUrl(youtubeUrl.trim()) && (
+                    <p className="mt-2 text-sm text-red-600">올바른 유튜브 URL 형식이 아닙니다.</p>
+                  )}
                 </div>
               )}
               
@@ -347,7 +640,7 @@ export default function Home() {
               <button
                 className="px-6 py-3 rounded-xl bg-orange-500 text-white font-medium hover:bg-orange-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                 onClick={handleConvert}
-                disabled={loading}
+                disabled={loading || (tab === "youtube" && youtubeUrl.trim() !== "" && !isValidYouTubeUrl(youtubeUrl.trim()))}
               >
                 <svg viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4">
                   <path d="M7.41,8.58L12,13.17L16.59,8.58L18,10L12,16L6,10L7.41,8.58Z"/>
@@ -367,9 +660,25 @@ export default function Home() {
           
           {loading && (
             <div className="mb-6 text-center">
-              <div className="inline-flex items-center gap-3 px-6 py-4 bg-blue-50 border border-blue-200 rounded-2xl">
-                <div className="w-5 h-5 border-2 border-blue-200 border-t-blue-500 rounded-full animate-spin"></div>
-                <span className="text-blue-700 font-medium">잠시만 기다려주세요...</span>
+              <div className="inline-block px-8 py-6 bg-blue-50 border border-blue-200 rounded-2xl max-w-md mx-auto">
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="w-5 h-5 border-2 border-blue-200 border-t-blue-500 rounded-full animate-spin"></div>
+                  <span className="text-blue-700 font-medium">
+                    {loadingStep || "처리 중..."}
+                  </span>
+                </div>
+                
+                {/* 프로그레스 바 */}
+                <div className="w-full bg-blue-100 rounded-full h-2 mb-2">
+                  <div 
+                    className="bg-blue-500 h-2 rounded-full transition-all duration-300 ease-out"
+                    style={{ width: `${progress}%` }}
+                  ></div>
+                </div>
+                
+                <div className="text-sm text-blue-600 font-medium">
+                  {progress}%
+                </div>
               </div>
             </div>
           )}
@@ -377,32 +686,110 @@ export default function Home() {
           {/* 결과 박스 */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-8">
             <div className="bg-white rounded-2xl p-6 shadow-lg border">
-              <div className="flex items-center gap-3 mb-4">
-                <div className="w-8 h-8 rounded-lg bg-blue-500 flex items-center justify-center">
-                  <svg viewBox="0 0 24 24" fill="white" className="w-4 h-4">
-                    <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"/>
-                  </svg>
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-lg bg-blue-500 flex items-center justify-center">
+                    <svg viewBox="0 0 24 24" fill="white" className="w-4 h-4">
+                      <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"/>
+                    </svg>
+                  </div>
+                  <h3 className="text-lg font-semibold text-gray-800">변환 결과</h3>
                 </div>
-                <h3 className="text-lg font-semibold text-gray-800">변환 결과</h3>
+                
+                {convertResult && (
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => copyToClipboard(convertResult)}
+                      className="p-2 rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-50 transition-all"
+                      title="클립보드에 복사"
+                    >
+                      <svg viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4">
+                        <path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/>
+                      </svg>
+                    </button>
+                    <button
+                      onClick={() => downloadAsText(convertResult, `conversion-${Date.now()}`)}
+                      className="p-2 rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-50 transition-all"
+                      title="텍스트 파일로 다운로드"
+                    >
+                      <svg viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4">
+                        <path d="M12 15.5l4-4H8l4 4zM5 20v-2h14v2H5zm7-18L5 9h5v6h2V9h5l-7-7z"/>
+                      </svg>
+                    </button>
+                  </div>
+                )}
               </div>
+              
+              {/* 파일 정보 표시 */}
+              {uploadResult && (
+                <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                  <div className="flex items-center gap-2 mb-2">
+                    <svg viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4 text-blue-500">
+                      <path d="M13,9H11V7H13M13,17H11V11H13M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2Z"/>
+                    </svg>
+                    <span className="text-sm font-medium text-blue-700">처리 정보</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-blue-600">
+                    <div><span className="font-medium">파일명:</span> {uploadResult.fileName}</div>
+                    <div><span className="font-medium">크기:</span> {uploadResult.fileSize ? formatFileSize(uploadResult.fileSize) : '알 수 없음'}</div>
+                    <div><span className="font-medium">처리시간:</span> {uploadResult.processingTime ? formatProcessingTime(uploadResult.processingTime) : '알 수 없음'}</div>
+                    <div><span className="font-medium">화자수:</span> {uploadResult.speakers?.length || 0}명</div>
+                    {uploadResult.confidence && (
+                      <div className="col-span-2"><span className="font-medium">평균 신뢰도:</span> {(uploadResult.confidence * 100).toFixed(1)}%</div>
+                    )}
+                  </div>
+                </div>
+              )}
+              
               <div className="min-h-[180px] bg-gray-50 border border-gray-400 rounded-xl p-4">
                 {convertResult ? (
                   <div className="text-gray-700 text-sm leading-relaxed">
-                    {convertResult.split('\n\n').map((speakerText, index) => (
-                      <div key={index} className="mb-3 last:mb-0">
-                        {speakerText.split(': ').map((part, partIndex) => (
-                          partIndex === 0 ? (
-                            <span key={partIndex} className="font-semibold text-blue-600">{part}: </span>
-                          ) : (
-                            <span key={partIndex} className="whitespace-pre-wrap">{part}</span>
-                          )
-                        ))}
-                      </div>
-                    ))}
+                    {convertResult.split('\n\n').map((speakerText, index) => {
+                      const [speakerName, ...textParts] = speakerText.split(': ');
+                      const text = textParts.join(': ');
+                      const isExpanded = expandedSpeakers.has(speakerName);
+                      const shouldTruncate = text.length > 150;
+                      
+                      // 화자별 색상 지정
+                      const getSpeakerColor = (name: string) => {
+                        if (name === 'A') return { bg: 'bg-blue-50', border: 'border-blue-200', text: 'text-blue-700', dot: 'bg-blue-500' };
+                        if (name === 'B') return { bg: 'bg-green-50', border: 'border-green-200', text: 'text-green-700', dot: 'bg-green-500' };
+                        if (name === 'C') return { bg: 'bg-purple-50', border: 'border-purple-200', text: 'text-purple-700', dot: 'bg-purple-500' };
+                        if (name === 'D') return { bg: 'bg-orange-50', border: 'border-orange-200', text: 'text-orange-700', dot: 'bg-orange-500' };
+                        return { bg: 'bg-gray-50', border: 'border-gray-200', text: 'text-gray-700', dot: 'bg-gray-500' };
+                      };
+                      
+                      const colors = getSpeakerColor(speakerName);
+                      
+                      return (
+                        <div key={index} className={`mb-3 last:mb-0 border ${colors.border} rounded-lg p-3 ${colors.bg}`}>
+                          <div className="flex items-center justify-between mb-2">
+                            <span className={`font-semibold ${colors.text} flex items-center gap-2`}>
+                              <div className={`w-2 h-2 ${colors.dot} rounded-full`}></div>
+                              {speakerName}
+                            </span>
+                            {shouldTruncate && (
+                              <button
+                                onClick={() => toggleSpeaker(speakerName)}
+                                className="text-xs text-gray-500 hover:text-gray-700 flex items-center gap-1"
+                              >
+                                {isExpanded ? '접기' : '더보기'}
+                                <svg viewBox="0 0 24 24" fill="currentColor" className={`w-3 h-3 transition-transform ${isExpanded ? 'rotate-180' : ''}`}>
+                                  <path d="M7.41,8.58L12,13.17L16.59,8.58L18,10L12,16L6,10L7.41,8.58Z"/>
+                                </svg>
+                              </button>
+                            )}
+                          </div>
+                          <div className="text-gray-700 whitespace-pre-wrap">
+                            {shouldTruncate && !isExpanded ? `${text.substring(0, 150)}...` : text}
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 ) : (
                   <div className="text-center text-gray-400 py-12">
-                    <div className="w-12 h-12 mx-auto mb-3 text-gray-300">
+                    <div className="w-12 h-12 mx-auto mb-3 text-gray-300 text-base">
                       <svg viewBox="0 0 24 24" fill="currentColor" className="w-full h-full">
                         <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"/>
                       </svg>
@@ -414,31 +801,117 @@ export default function Home() {
             </div>
             
             <div className="bg-white rounded-2xl p-6 shadow-lg border">
-              <div className="flex items-center gap-3 mb-4">
-                <div className="w-8 h-8 rounded-lg bg-green-500 flex items-center justify-center">
-                  <svg viewBox="0 0 24 24" fill="white" className="w-4 h-4">
-                    <path d="M3 3v18h18"/>
-                    <path d="M18.7 8l-5.1 5.2-2.8-2.7L7 14.3"/>
-                  </svg>
-                </div>
-                <div className="flex justify-between items-center w-full">
-                    <h3 className="text-lg font-semibold text-gray-800">요약 결과</h3>
-                <button
-                className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 font-medium hover:bg-gray-50 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                onClick={handleSummary}
-                disabled={loading || !convertResult}
-              >
-                <svg viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4">
-                  <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"/>
-                </svg>
-                요약하기
-              </button>
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-lg bg-green-500 flex items-center justify-center">
+                    <svg viewBox="0 0 24 24" fill="white" className="w-4 h-4">
+                      <path d="M3 3v18h18"/>
+                      <path d="M18.7 8l-5.1 5.2-2.8-2.7L7 14.3"/>
+                    </svg>
+                  </div>
+                  <h3 className="text-lg font-semibold text-gray-800">요약 결과</h3>
                 </div>
                 
+                <div className="flex items-center gap-2">
+                  <button
+                    className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 font-medium hover:bg-gray-50 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                    onClick={handleSummary}
+                    disabled={loading || !convertResult}
+                  >
+                    <svg viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4">
+                      <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"/>
+                    </svg>
+                    요약하기
+                  </button>
+                  
+                  {summaryResult && (
+                    <>
+                      <button
+                        onClick={() => copyToClipboard(summaryResult)}
+                        className="p-2 rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-50 transition-all"
+                        title="클립보드에 복사"
+                      >
+                        <svg viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4">
+                          <path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/>
+                        </svg>
+                      </button>
+                      <button
+                        onClick={() => downloadAsText(summaryResult, `summary-${Date.now()}`)}
+                        className="p-2 rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-50 transition-all"
+                        title="텍스트 파일로 다운로드"
+                      >
+                        <svg viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4">
+                          <path d="M12 15.5l4-4H8l4 4zM5 20v-2h14v2H5zm7-18L5 9h5v6h2V9h5l-7-7z"/>
+                        </svg>
+                      </button>
+                      {convertResult && (
+                        <button
+                          onClick={() => downloadAsJson(convertResult, summaryResult, `smartnote-${Date.now()}`)}
+                          className="p-2 rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-50 transition-all"
+                          title="JSON 파일로 전체 결과 다운로드"
+                        >
+                          <svg viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4">
+                            <path d="M12 15.5l4-4H8l4 4zM5 20v-2h14v2H5zm7-18L5 9h5v6h2V9h5l-7-7z"/>
+                          </svg>
+                        </button>
+                      )}
+                    </>
+                  )}
+                </div>
               </div>
               <div className="min-h-[180px] bg-gray-50 border border-gray-400 rounded-xl p-4">
                 {summaryResult ? (
-                  <div className="text-gray-700 text-sm leading-relaxed whitespace-pre-wrap">{summaryResult}</div>
+                  <div className="space-y-4">
+                    {/* 요약 정보 헤더 */}
+                    <div className="flex items-center gap-2 pb-2 border-b border-gray-200">
+                      <svg viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4 text-green-500">
+                        <path d="M9,20.42L2.79,14.21L5.62,11.38L9,14.77L18.88,4.88L21.71,7.71L9,20.42Z"/>
+                      </svg>
+                      <span className="text-sm font-medium text-green-700">요약 완료</span>
+                      <div className="ml-auto text-xs text-gray-500">
+                        {summaryResult.split('\n').filter(p => p.trim()).length}개 문단 • {summaryResult.length}자
+                        {summaryMetadata?.compressionRatio && (
+                          <span className="ml-2 text-blue-600 font-medium">
+                            압축률 {summaryMetadata.compressionRatio}%
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    
+                    {/* 요약 내용 */}
+                    <div className="text-gray-700 text-sm leading-relaxed">
+                      {summaryResult.split('\n')
+                        .filter(paragraph => paragraph.trim().length > 0)
+                        .map((paragraph, index) => (
+                        <div key={index} className="mb-3 last:mb-0 p-3 bg-white border border-gray-200 rounded-lg shadow-sm">
+                          <div className="flex items-start gap-3">
+                            <div className="w-6 h-6 bg-green-100 text-green-600 rounded-full flex items-center justify-center text-xs font-bold mt-0.5 flex-shrink-0">
+                              {index + 1}
+                            </div>
+                            <div className="flex-1 whitespace-pre-wrap">{paragraph.trim()}</div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    
+                    {/* 요약 품질 정보 */}
+                    {summaryMetadata && (
+                      <div className="mt-4 p-3 bg-gray-100 border border-gray-200 rounded-lg">
+                        <div className="flex items-center gap-2 mb-2">
+                          <svg viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4 text-gray-500">
+                            <path d="M13,9H11V7H13M13,17H11V11H13M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2Z"/>
+                          </svg>
+                          <span className="text-sm font-medium text-gray-700">요약 정보</span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-gray-600">
+                          <div><span className="font-medium">원본:</span> {summaryMetadata.originalLength?.toLocaleString()}자</div>
+                          <div><span className="font-medium">정리본:</span> {summaryMetadata.cleanedLength?.toLocaleString()}자</div>
+                          <div><span className="font-medium">요약:</span> {summaryMetadata.summaryLength?.toLocaleString()}자</div>
+                          <div><span className="font-medium">압축률:</span> {summaryMetadata.compressionRatio}%</div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 ) : (
                   <div className="text-center text-gray-400 py-12">
                     <div className="w-12 h-12 mx-auto mb-3 text-gray-300">
@@ -448,6 +921,32 @@ export default function Home() {
                       </svg>
                     </div>
                     <p className="text-sm">요약 결과가 여기에 표시됩니다</p>
+                    {convertResult ? (
+                      <button
+                        onClick={handleSummary}
+                        disabled={loading}
+                        className="mt-4 px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-all disabled:opacity-50 text-sm font-medium"
+                      >
+                        지금 요약하기
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => {
+                          setConvertResult("안녕하세요. 오늘은 인공지능과 자연어 처리에 대해 설명드리겠습니다. 자연어 처리는 컴퓨터가 인간의 언어를 이해하고 처리할 수 있도록 하는 기술입니다. 이 기술은 음성 인식, 기계 번역, 감정 분석 등 다양한 분야에서 활용되고 있습니다. 특히 최근에는 ChatGPT와 같은 대화형 AI 모델이 등장하면서 자연어 처리 기술이 더욱 주목받고 있습니다. 이러한 기술들은 우리의 일상생활을 더욱 편리하게 만들어주고 있으며, 앞으로도 계속 발전할 것으로 예상됩니다. 감사합니다.");
+                          setUploadResult({
+                            fileName: "test_sample.txt",
+                            fileSize: 1024,
+                            fileType: "text/plain",
+                            processingTime: 2.5,
+                            speakers: [],
+                            segments: [],
+                          });
+                        }}
+                        className="mt-4 px-4 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600 transition-all text-sm font-medium"
+                      >
+                        🧪 테스트 텍스트로 시험해보기
+                      </button>
+                    )}
                   </div>
                 )}
               </div>

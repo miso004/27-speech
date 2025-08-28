@@ -23,6 +23,20 @@
   --gradient-purple: linear-gradient(135deg, #8B5CF6 0%, #A855F7 25%, #9333EA 50%, #7C3AED 75%, #6D28D9 100%);
   --gradient-purple-dark: linear-gradient(135deg, #6D28D9 0%, #5B21B6 25%, #4C1D95 50%, #3B1764 75%, #2D1B69 100%);
   
+  /* 다크 테마 배경 (Channel Analytics 스타일) */
+  --gradient-dark: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 25%, #1f1f1f 50%, #0f0f0f 75%, #000000 100%);
+  --gradient-dark-light: linear-gradient(135deg, #2a2a2a 0%, #3d3d3d 25%, #2f2f2f 50%, #1f1f1f 75%, #111111 100%);
+  
+  /* 중앙에서 퍼지는 래디얼 그라데이션 (Channel Analytics 스타일) */
+  --gradient-dark-radial: radial-gradient(ellipse at center, #3a3a3a 0%, #2a2a2a 20%, #1a1a1a 40%, #0f0f0f 70%, #000000 100%);
+  
+  /* 오렌지 포인트 색상 팔레트 */
+  --orange-primary: #FF6B35;
+  --orange-secondary: #F7931E;
+  --orange-light: #FFB366;
+  --orange-dark: #E55A2B;
+  --orange-glow: rgba(255, 107, 53, 0.3);
+  
   /* 그림자 */
   --shadow-soft: 0 8px 32px 0 rgba(31, 38, 135, 0.37);
   --shadow-medium: 0 12px 40px 0 rgba(31, 38, 135, 0.45);
@@ -68,13 +82,13 @@ body {
 }
 
 .dark-gradient-bg {
-  background: var(--gradient-purple);
-  background-size: 400% 400%;
-  animation: gradient-shift 20s ease infinite;
+  background: var(--gradient-dark-radial);
+  background-size: 150% 150%;
+  animation: radial-shift 20s ease infinite;
 }
 
 .dark-gradient-bg-alt {
-  background: var(--gradient-purple-dark);
+  background: var(--gradient-dark-light);
   background-size: 400% 400%;
   animation: gradient-shift 25s ease infinite;
 }
@@ -129,6 +143,12 @@ body {
   100% { background-position: 0% 50%; }
 }
 
+@keyframes radial-shift {
+  0% { background-size: 120% 120%; }
+  50% { background-size: 180% 180%; }
+  100% { background-size: 120% 120%; }
+}
+
 /* 부드러운 애니메이션 */
 .animate-float {
   animation: float 6s ease-in-out infinite;
@@ -173,4 +193,89 @@ body {
 
 ::-webkit-scrollbar-thumb:hover {
   background: var(--glass-highlight);
+}
+
+/* 다크 테마용 글라스 효과 */
+.glass-dark {
+  background: rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+}
+
+.glass-dark-strong {
+  background: rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(40px);
+  -webkit-backdrop-filter: blur(40px);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  box-shadow: 0 12px 40px 0 rgba(0, 0, 0, 0.5);
+}
+
+.glass-dark-card {
+  background: rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+  transition: var(--transition-smooth);
+}
+
+.glass-dark-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 40px 0 rgba(0, 0, 0, 0.4);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+/* bg */
+.main-bg2 {
+    background: #554436;
+    background: radial-gradient(
+      circle at 70% 30%,
+      rgba(85, 68, 54, 1) 0%,
+      rgba(54, 50, 62, 1) 30%,
+      rgba(22, 22, 24, 1) 80%
+    );
+  }
+
+/* 오렌지 포인트 스타일 */
+.orange-primary { background-color: var(--orange-primary); }
+.orange-secondary { background-color: var(--orange-secondary); }
+.orange-light { background-color: var(--orange-light); }
+.orange-dark { background-color: var(--orange-dark); }
+
+.text-orange-primary { color: var(--orange-primary); }
+.text-orange-secondary { color: var(--orange-secondary); }
+.text-orange-light { color: var(--orange-light); }
+.text-orange-dark { color: var(--orange-dark); }
+
+.border-orange-primary { border-color: var(--orange-primary); }
+.border-orange-glow { border-color: var(--orange-glow); }
+
+.shadow-orange-glow { 
+  box-shadow: 0 0 20px var(--orange-glow), 0 8px 32px 0 rgba(0, 0, 0, 0.3); 
+}
+
+/* 다크 사이드바 스타일 */
+.sidebar-dark {
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-right: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* 메트릭 카드 스타일 */
+.metric-card {
+  background: rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 16px;
+  transition: var(--transition-smooth);
+}
+
+.metric-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 40px 0 rgba(0, 0, 0, 0.4);
+  background: rgba(255, 255, 255, 0.1);
 }

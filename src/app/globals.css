@@ -19,9 +19,10 @@
   --gradient-accent: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
   --gradient-warm: linear-gradient(135deg, #fa709a 0%, #fee140 100%);
   
-  /* 보라색 그라데이션 배경 (이미지 기준) */
-  --gradient-purple: linear-gradient(135deg, #8B5CF6 0%, #A855F7 25%, #9333EA 50%, #7C3AED 75%, #6D28D9 100%);
-  --gradient-purple-dark: linear-gradient(135deg, #6D28D9 0%, #5B21B6 25%, #4C1D95 50%, #3B1764 75%, #2D1B69 100%);
+  /* FundFlow 라벤더/보라색 그라데이션 배경 */
+  --gradient-fundflow: linear-gradient(135deg, #8B92FF 0%, #A8B2FF 25%, #C4C8FF 50%, #D4D8FF 75%, #E8EAFF 100%);
+  --gradient-fundflow-radial: radial-gradient(ellipse at center, #A8B2FF 0%, #8B92FF 30%, #7A85FF 60%, #6B76FF 100%);
+  --gradient-fundflow-card: linear-gradient(135deg, rgba(139, 146, 255, 0.1) 0%, rgba(168, 178, 255, 0.05) 100%);
   
   /* 다크 테마 배경 (Channel Analytics 스타일) */
   --gradient-dark: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 25%, #1f1f1f 50%, #0f0f0f 75%, #000000 100%);
@@ -74,11 +75,31 @@ body {
   overflow-x: hidden;
 }
 
-/* 보라색 그라데이션 배경 */
-.purple-gradient-bg {
-  background: var(--gradient-purple);
-  background-size: 400% 400%;
-  animation: gradient-shift 20s ease infinite;
+/* FundFlow 라벤더/보라색 그라데이션 배경 */
+.fundflow-gradient-bg {
+    background: #554436;
+    background: radial-gradient(
+      circle at 70% 30%,
+      rgba(150, 159, 214, 1) 0%,
+      rgba(210, 218, 226, 1) 100%,
+    );
+  animation: radial-shift 25s ease infinite;
+}
+
+.fundflow-card {
+  background: rgba(255, 255, 255, 0.3);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+ 
+  border-radius: 20px;
+  box-shadow: 0 8px 32px 0 rgba(139, 146, 255, 0.3);
+  transition: var(--transition-smooth);
+}
+
+.fundflow-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 12px 40px 0 rgba(139, 146, 255, 0.4);
+  background: rgba(255, 255, 255, 0.2);
 }
 
 .dark-gradient-bg {
@@ -237,6 +258,17 @@ body {
       rgba(22, 22, 24, 1) 80%
     );
   }
+
+  .main-bg3 {
+    background: #D2DAE2;
+    background: radial-gradient(
+      circle at 0% 20%,
+      rgba(148, 157, 214, 1) 30%,
+      rgba(210, 218, 226, 1) 90%
+    );
+  }
+
+
 
 /* 오렌지 포인트 스타일 */
 .orange-primary { background-color: var(--orange-primary); }

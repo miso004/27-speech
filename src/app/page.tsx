@@ -407,7 +407,9 @@ export default function Home() {
   };
 
   return (
-    <div className="min-h-screen relative overflow-hidden main-bg3 justify-center flex">
+    <div className="min-h-screen relative overflow-hidden justify-center flex" style={{
+      background: 'radial-gradient(circle at 0% 20%, rgba(148, 157, 214, 1) 30%, rgba(210, 218, 226, 1) 90%)'
+    }}>
         <div className="w-[1400px] flex">
  {/* 사이드바 */}
      <aside className="w-20 p-4 fundflow-card ml-4 mt-4 mb-4 rounded-3xl shadow-lg"
